@@ -15,6 +15,33 @@
 #include <linux/sched.h>
 #include <linux/sched/coredump.h>
 
+#include <linux/delay.h>
+#include <linux/fs.h>
+#include <asm/segment.h>
+#include <asm/uaccess.h>
+#include <linux/uaccess.h>
+#include <linux/delay.h>
+#include <linux/kernel.h>
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
+#include <linux/io.h>
+#include <linux/random.h>
+#include <linux/pci.h>
+#include <linux/fs.h>
+
+
+// static u32 cxl_calc_checksum(struct page *page){
+// 	u32 checksum;
+// 	void *addr = kmap_atomic(page);
+// 	*cxl_page_addr_0 = virt_to_phys(addr);
+// 	*cxl_func_sel = CHCEKSUM;
+// 	usleep_range(30, 30);
+// 	checksum = (u32)*cxl_result;
+// 	kunmap_atomic(addr);
+// 	return checksum;
+// }
+
+
 #ifdef CONFIG_KSM
 int ksm_madvise(struct vm_area_struct *vma, unsigned long start,
 		unsigned long end, int advice, unsigned long *vm_flags);

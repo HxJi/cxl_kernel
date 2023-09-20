@@ -283,6 +283,52 @@ static int ksm_nr_node_ids = 1;
 #define ksm_nr_node_ids		1
 #endif
 
+#define CHCEKSUM 1
+#define COMPARE 2
+#define COMPRESS 4
+
+unsigned long long *cxl_func_sel;
+unsigned long long *cxl_page_addr_0;
+unsigned long long *cxl_page_addr_1;
+unsigned long long *cxl_cycle;
+unsigned long long *cxl_result;
+
+// follow memcmp_pages function	in mm/ksm.c
+static int cxl_memcmp_pages(struct page *page1, struct page *page2){
+	char *addr1, *addr2;
+	int ret = -1;
+	addr1 = kmap_atomic(page1);
+	addr2 = kmap_atomic(page2);
+	if (cxl_func_sel != 0){
+		*cxl_page_addr_0 = virt_to_phys(addr1);
+		*cxl_page_addr_1 = virt_to_phys(addr2);
+		*cxl_func_sel = COMPARE;
+		kunmap_atomic(addr1);
+		kunmap_atomic(addr2);
+		usleep_range(10, 10);
+		ret = *cxl_result;
+	}
+
+	else{
+		void* virt_addr = ioremap(0x20beffa00000, 0x1000);
+		unsigned long long *ptr = (unsigned long long *) virt_addr;
+		cxl_func_sel = ptr;
+		cxl_page_addr_0 = cxl_func_sel + 1;
+		cxl_page_addr_1 = cxl_func_sel + 2;
+		cxl_cycle = cxl_func_sel + 3;
+		cxl_result = cxl_func_sel + 4;
+		ret = memcmp(addr1, addr2, PAGE_SIZE);
+		kunmap_atomic(addr1);
+		kunmap_atomic(addr2);
+		return ret;
+	}
+	
+	if (ret == 1) return -1;
+	else if (ret == 0) return 0;
+	else if (ret == 2) return 1;
+	else return 1;
+}
+
 #define KSM_RUN_STOP	0
 #define KSM_RUN_MERGE	1
 #define KSM_RUN_UNMERGE	2
@@ -1020,6 +1066,27 @@ static u32 calc_checksum(struct page *page)
 	return checksum;
 }
 
+static u32 cxl_calc_checksum(struct page *page){
+	u32 checksum;
+	void *addr = kmap_atomic(page);
+
+	if(cxl_func_sel == 0){
+		u32 ret = calc_checksum(page);
+		kunmap_atomic(addr);
+		return ret;
+	}
+
+	*cxl_page_addr_0 = virt_to_phys(addr);
+	*cxl_func_sel = CHCEKSUM;
+	kunmap_atomic(addr);
+
+	usleep_range(10, 10);
+	checksum = (u32)*cxl_result;
+	
+	return checksum;
+}
+
+
 static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 			      pte_t *orig_pte)
 {
@@ -1629,7 +1696,9 @@ again:
 			goto again;
 		}
 
-		ret = memcmp_pages(page, tree_page);
+		// ret = memcmp_pages(page, tree_page);
+		ret = cxl_memcmp_pages(page, tree_page);
+
 		put_page(tree_page);
 
 		parent = *new;
@@ -1862,7 +1931,9 @@ again:
 			goto again;
 		}
 
-		ret = memcmp_pages(kpage, tree_page);
+		// ret = memcmp_pages(kpage, tree_page);
+		ret = cxl_memcmp_pages(kpage, tree_page);
+
 		put_page(tree_page);
 
 		parent = *new;
@@ -1951,7 +2022,8 @@ struct ksm_rmap_item *unstable_tree_search_insert(struct ksm_rmap_item *rmap_ite
 			return NULL;
 		}
 
-		ret = memcmp_pages(page, tree_page);
+		// ret = memcmp_pages(page, tree_page);
+		ret = cxl_memcmp_pages(page, tree_page);
 
 		parent = *new;
 		if (ret < 0) {
@@ -2098,7 +2170,8 @@ static void cmp_and_merge_page(struct page *page, struct ksm_rmap_item *rmap_ite
 	 * don't want to insert it in the unstable tree, and we don't want
 	 * to waste our time searching for something identical to it there.
 	 */
-	checksum = calc_checksum(page);
+	// checksum = calc_checksum(page);
+	checksum = cxl_calc_checksum(page);
 	if (rmap_item->oldchecksum != checksum) {
 		rmap_item->oldchecksum = checksum;
 		return;
@@ -3188,8 +3261,22 @@ static int __init ksm_init(void)
 	struct task_struct *ksm_thread;
 	int err;
 
+	void* virt_addr = ioremap(0x20beffa00000, 0x1000);
+	if (virt_addr == NULL) {
+		pr_err("ksm: ioremap failed\n");
+	}
+	unsigned long long *ptr = (unsigned long long *) virt_addr;
+
+	cxl_func_sel = ptr;
+	cxl_page_addr_0 = cxl_func_sel + 1;
+	cxl_page_addr_1 = cxl_func_sel + 2;
+	cxl_cycle = cxl_func_sel + 3;
+	cxl_result = cxl_func_sel + 4;
+	
 	/* The correct value depends on page size and endianness */
 	zero_checksum = calc_checksum(ZERO_PAGE(0));
+	// zero_checksum = cxl_calc_checksum(ZERO_PAGE(0));
+
 	/* Default to false for backwards compatibility */
 	ksm_use_zero_pages = false;
 
