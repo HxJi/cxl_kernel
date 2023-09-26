@@ -305,7 +305,7 @@ static int cxl_memcmp_pages(struct page *page1, struct page *page2){
 		*cxl_func_sel = COMPARE;
 		kunmap_atomic(addr1);
 		kunmap_atomic(addr2);
-		usleep_range(10, 10);
+		usleep_range(30, 30);
 		ret = *cxl_result;
 	}
 
@@ -1080,7 +1080,7 @@ static u32 cxl_calc_checksum(struct page *page){
 	*cxl_func_sel = CHCEKSUM;
 	kunmap_atomic(addr);
 
-	usleep_range(10, 10);
+	usleep_range(30, 30);
 	checksum = (u32)*cxl_result;
 	
 	return checksum;
