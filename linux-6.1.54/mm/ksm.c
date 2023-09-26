@@ -310,7 +310,7 @@ static int cxl_memcmp_pages(struct page *page1, struct page *page2){
 	}
 
 	else{
-		void* virt_addr = ioremap(0x20beffa00000, 0x1000);
+		void* virt_addr = ioremap(0x22feffa00000, 0x1000);
 		unsigned long long *ptr = (unsigned long long *) virt_addr;
 		cxl_func_sel = ptr;
 		cxl_page_addr_0 = cxl_func_sel + 1;
