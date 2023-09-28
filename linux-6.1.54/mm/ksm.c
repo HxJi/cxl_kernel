@@ -3261,7 +3261,7 @@ static int __init ksm_init(void)
 	struct task_struct *ksm_thread;
 	int err;
 
-	void* virt_addr = ioremap(0x20beffa00000, 0x1000);
+	void* virt_addr = ioremap(0x22feffa00000, 0x1000);
 	if (virt_addr == NULL) {
 		pr_err("ksm: ioremap failed\n");
 	}
