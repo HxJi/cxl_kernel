@@ -303,6 +303,65 @@ static DEFINE_SPINLOCK(ksm_mmlist_lock);
 		sizeof(struct __struct), __alignof__(struct __struct),\
 		(__flags), NULL)
 
+// CXL offloading relevant codes
+#define CHECKSUM 1
+#define COMPARE  2
+#define COMPRESS 4
+
+unsigned long long *cxl_func_sel;
+unsigned long long *cxl_page_addr_0;
+unsigned long long *cxl_page_addr_1;
+unsigned long long *cxl_cycle;
+unsigned long long *cxl_result;
+
+// CXL page comparison
+static int cxl_memcmp_pages(struct page *page1, struct page *page2)
+{
+	char *addr1, *addr2;
+	int ret, prev_ret;
+
+	addr1 = kmap_atomic(page1);
+	addr2 = kmap_atomic(page2);
+
+	if(cxl_func_sel != 0 ){
+		prev_ret = *cxl_result;
+		*cxl_page_addr_0 = virt_to_phys(addr1);
+		*cxl_page_addr_1 = virt_to_phys(addr2);
+		*cxl_func_sel = COMPARE;
+		kunmap_atomic(addr1);
+		kunmap_atomic(addr2);
+		// avoid precise usleep
+		// usleep_range(40, 45);
+		// udelay(40);
+		// set_current_state(TASK_INTERRUPTIBLE);
+		// schedule_timeout(usecs_to_jiffies(40));
+		usleep_range(30, 40);
+		ret = *cxl_result;
+	}
+	else{
+		void* virt_addr = ioremap(0x22feffa00000, 0x1000);
+		unsigned long long *ptr = (unsigned long long *) virt_addr;
+		cxl_func_sel = ptr;
+		cxl_page_addr_0 = cxl_func_sel + 1;
+		cxl_page_addr_1 = cxl_func_sel + 2;
+		cxl_cycle = cxl_func_sel + 3;
+		cxl_result = cxl_func_sel + 4;
+		ret = memcmp(addr1, addr2, PAGE_SIZE);
+		kunmap_atomic(addr1);
+		kunmap_atomic(addr2);
+		return ret;
+	}
+
+	if(ret == 1) return -1;
+	else if(ret == 2) return 1;
+	else if(ret == 0) {
+		ret = memcmp(addr1, addr2, PAGE_SIZE);
+		if (ret == 0) return 0;
+		else return ret;
+	}
+	else return 1;
+}
+
 static int __init ksm_slab_init(void)
 {
 	rmap_item_cache = KSM_KMEM_CACHE(ksm_rmap_item, 0);
@@ -1085,6 +1144,42 @@ static u32 calc_checksum(struct page *page)
 	return checksum;
 }
 
+// CXL offloading calc_checksum
+static u32 cxl_calc_checksum(struct page *page)
+{
+	u32 checksum, prev_checksum;
+
+	void *addr = kmap_atomic(page);
+	// ioremap failed, keeps the original checksum
+	if(cxl_func_sel == 0){
+		checksum = xxhash(addr, PAGE_SIZE, 0);
+		kunmap_atomic(addr);
+		return checksum;
+	}
+	else{
+		prev_checksum = (u32)*cxl_result;
+		*cxl_page_addr_0 = virt_to_phys(addr);
+		*cxl_func_sel = CHECKSUM;
+		kunmap_atomic(addr);
+
+		// udelay(40);
+		// usleep_range(40, 45);
+		// use sched_timeout instead of usleep_range
+		// set_current_state(TASK_INTERRUPTIBLE);
+		// schedule_timeout(usecs_to_jiffies(40));
+
+		usleep_range(50, 55);
+		if(prev_checksum != (u32)*cxl_result){
+			checksum = (u32)*cxl_result;
+		}
+		else{
+			checksum = xxhash(addr, PAGE_SIZE, 0);
+		}
+		return checksum;
+	}
+}
+
+
 static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 			      pte_t *orig_pte)
 {
@@ -1695,7 +1790,9 @@ again:
 			goto again;
 		}
 
-		ret = memcmp_pages(page, tree_page);
+		// ret = memcmp_pages(page, tree_page);
+		ret = cxl_memcmp_pages(page, tree_page);
+
 		put_page(tree_page);
 
 		parent = *new;
@@ -1928,7 +2025,9 @@ again:
 			goto again;
 		}
 
-		ret = memcmp_pages(kpage, tree_page);
+		// ret = memcmp_pages(kpage, tree_page);
+		ret = cxl_memcmp_pages(kpage, tree_page);
+
 		put_page(tree_page);
 
 		parent = *new;
@@ -2017,7 +2116,8 @@ struct ksm_rmap_item *unstable_tree_search_insert(struct ksm_rmap_item *rmap_ite
 			return NULL;
 		}
 
-		ret = memcmp_pages(page, tree_page);
+		// ret = memcmp_pages(page, tree_page);
+		ret = cxl_memcmp_pages(page, tree_page);
 
 		parent = *new;
 		if (ret < 0) {
@@ -2164,7 +2264,8 @@ static void cmp_and_merge_page(struct page *page, struct ksm_rmap_item *rmap_ite
 	 * don't want to insert it in the unstable tree, and we don't want
 	 * to waste our time searching for something identical to it there.
 	 */
-	checksum = calc_checksum(page);
+	// checksum = calc_checksum(page);
+	checksum = cxl_calc_checksum(page);
 	if (rmap_item->oldchecksum != checksum) {
 		rmap_item->oldchecksum = checksum;
 		return;
@@ -3450,6 +3551,19 @@ static int __init ksm_init(void)
 {
 	struct task_struct *ksm_thread;
 	int err;
+
+	// Init CXL pointers
+	void* virt_addr = ioremap(0x22feffa00000, 0x1000);
+	if (virt_addr == NULL) {
+		pr_err("ksm: ioremap failed\n");
+	}
+	unsigned long long *ptr = (unsigned long long *) virt_addr;
+
+	cxl_func_sel = ptr;
+	cxl_page_addr_0 = cxl_func_sel + 1;
+	cxl_page_addr_1 = cxl_func_sel + 2;
+	cxl_cycle = cxl_func_sel + 3;
+	cxl_result = cxl_func_sel + 4;
 
 	/* The correct value depends on page size and endianness */
 	zero_checksum = calc_checksum(ZERO_PAGE(0));
