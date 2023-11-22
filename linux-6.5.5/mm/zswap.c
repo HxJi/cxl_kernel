@@ -84,6 +84,19 @@ static bool zswap_pool_reached_full;
 
 static int zswap_setup(void);
 
+// CXL data movement direction
+#define HOST_TO_CXL 1
+#define CXL_TO_HOST 2
+#define HOST_TO_HOST 3
+#define CXL_TO_CXL 4
+
+// CXL interface
+unsigned long long *cxl_func_sel;
+unsigned long long *cxl_src_page_addr;
+unsigned long long *cxl_dst_page_addr;
+unsigned long long *cxl_page_movement_lat;
+unsigned long long *cxl_page_movement_direction;
+
 /* Enable/disable zswap */
 static bool zswap_enabled = IS_ENABLED(CONFIG_ZSWAP_DEFAULT_ON);
 static int zswap_enabled_param_set(const char *,
@@ -141,6 +154,10 @@ module_param_named(non_same_filled_pages_enabled, zswap_non_same_filled_pages_en
 static bool zswap_exclusive_loads_enabled = IS_ENABLED(
 		CONFIG_ZSWAP_EXCLUSIVE_LOADS_DEFAULT_ON);
 module_param_named(exclusive_loads, zswap_exclusive_loads_enabled, bool, 0644);
+
+// utilize cxl to hold zswap pages
+static bool zswap_cxl_zpool_enabled = true;
+module_param_named(cxl_zpool, zswap_cxl_zpool_enabled, bool, 0644);
 
 /*********************************
 * data structures
@@ -1296,6 +1313,12 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 
 	mutex_lock(acomp_ctx->mutex);
 
+	// CXL zpool skip compression, mutex_lock neccessay?
+	if (zswap_cxl_zpool_enabled){
+		dlen = PAGE_SIZE;
+		goto skip_compression;
+	}
+
 	dst = acomp_ctx->dstmem;
 	sg_init_table(&input, 1);
 	sg_set_page(&input, page, PAGE_SIZE, 0);
@@ -1323,6 +1346,7 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 		goto put_dstmem;
 	}
 
+skip_compression:
 	/* store */
 	gfp = __GFP_NORETRY | __GFP_NOWARN | __GFP_KSWAPD_RECLAIM;
 	if (zpool_malloc_support_movable(entry->pool->zpool))
@@ -1337,7 +1361,16 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 		goto put_dstmem;
 	}
 	buf = zpool_map_handle(entry->pool->zpool, handle, ZPOOL_MM_WO);
-	memcpy(buf, dst, dlen);
+	if (zswap_cxl_zpool_enabled){
+		// copy page from host to zpool
+		cxl_src_page_addr = page_address(page);
+		cxl_dst_page_addr = buf;
+		cxl_page_movement_direction = HOST_TO_CXL;
+		usleep_range(50, 60);
+	}
+	else{
+		memcpy(buf, dst, dlen);
+	}
 	zpool_unmap_handle(entry->pool->zpool, handle);
 	mutex_unlock(acomp_ctx->mutex);
 
@@ -1448,6 +1481,16 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 		zpool_unmap_handle(entry->pool->zpool, entry->handle);
 	}
 
+	if(zswap_cxl_zpool_enabled){
+		// copy page from zpool to host
+		cxl_src_page_addr = src;
+		cxl_dst_page_addr = page_address(page);
+		cxl_page_movement_direction = CXL_TO_HOST;
+		usleep_range(50, 60);
+		ret = 0;
+		goto skip_decompression;
+	}
+
 	acomp_ctx = raw_cpu_ptr(entry->pool->acomp_ctx);
 	mutex_lock(acomp_ctx->mutex);
 	sg_init_one(&input, src, entry->length);
@@ -1456,6 +1499,8 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 	acomp_request_set_params(acomp_ctx->req, &input, &output, entry->length, dlen);
 	ret = crypto_wait_req(crypto_acomp_decompress(acomp_ctx->req), &acomp_ctx->wait);
 	mutex_unlock(acomp_ctx->mutex);
+
+skip_decompression:
 
 	if (zpool_can_sleep_mapped(entry->pool->zpool))
 		zpool_unmap_handle(entry->pool->zpool, entry->handle);
@@ -1595,6 +1640,23 @@ static int zswap_setup(void)
 {
 	struct zswap_pool *pool;
 	int ret;
+
+	// setup CXL offloading interface
+	if(zswap_cxl_zpool_enabled){
+		void *virt_addr = ioremap(0x22feffa00000, 0x1000);
+		if(!virt_addr){
+			pr_err("ioremap failed\n");
+			zswap_cxl_zpool_enabled = 0;
+		}
+		if(zswap_cxl_zpool_enabled){
+			unsigned long long *ptr = (unsigned long long *)virt_addr;
+			cxl_func_sel = *ptr;
+			cxl_src_page_addr = cxl_func_sel + 1;
+			cxl_dst_page_addr = cxl_func_sel + 2;
+			cxl_page_movement_lat = cxl_func_sel + 3;
+			cxl_page_movement_direction = cxl_func_sel + 4;
+		}
+	}
 
 	zswap_entry_cache = KMEM_CACHE(zswap_entry, 0);
 	if (!zswap_entry_cache) {

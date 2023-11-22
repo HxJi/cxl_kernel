@@ -253,6 +253,8 @@ static int zbud_alloc(struct zbud_pool *pool, size_t size, gfp_t gfp,
 
 	if (!size || (gfp & __GFP_HIGHMEM))
 		return -EINVAL;
+	
+	// zbud cannot accept the size larger than 4KB - 128B
 	if (size > PAGE_SIZE - ZHDR_SIZE_ALIGNED - CHUNK_SIZE)
 		return -ENOSPC;
 	chunks = size_to_chunks(size);

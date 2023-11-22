@@ -1004,6 +1004,7 @@ static int z3fold_alloc(struct z3fold_pool *pool, size_t size, gfp_t gfp,
 	if (size > PAGE_SIZE)
 		return -ENOSPC;
 
+	// keeping the original page size leads to HEADLESS page 
 	if (size > PAGE_SIZE - ZHDR_SIZE_ALIGNED - CHUNK_SIZE)
 		bud = HEADLESS;
 	else {
@@ -1024,11 +1025,20 @@ retry:
 		}
 		bud = FIRST;
 	}
+	// detect whether the system has 3 numa nodes
+	// if so, we can allocate the page from the CXL node (node 2)
+	// otherwise, we allocate the page from the local node
+	if(num_online_nodes() == 3){
+		page = alloc_pages_node(2, gfp, 0);
+	}
+	else{
+		page = alloc_page(gfp);
+	}
 
-	page = alloc_page(gfp);
 	if (!page)
 		return -ENOMEM;
 
+	// init_z3fold_page() returns the page address directly if bud == HEADLESS
 	zhdr = init_z3fold_page(page, bud == HEADLESS, pool, gfp);
 	if (!zhdr) {
 		__free_page(page);
