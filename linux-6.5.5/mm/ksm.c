@@ -308,7 +308,7 @@ static DEFINE_SPINLOCK(ksm_mmlist_lock);
 #define COMPARE  2
 #define COMPRESS 4
 
-unsigned long long *cxl_func_sel;
+unsigned long long *cxl_func_sel_ksm;
 unsigned long long *cxl_page_addr_0;
 unsigned long long *cxl_page_addr_1;
 unsigned long long *cxl_cycle;
@@ -323,11 +323,11 @@ static int cxl_memcmp_pages(struct page *page1, struct page *page2)
 	addr1 = kmap_atomic(page1);
 	addr2 = kmap_atomic(page2);
 
-	if(cxl_func_sel != 0 ){
+	if(cxl_func_sel_ksm != 0 ){
 		prev_ret = *cxl_result;
 		*cxl_page_addr_0 = virt_to_phys(addr1);
 		*cxl_page_addr_1 = virt_to_phys(addr2);
-		*cxl_func_sel = COMPARE;
+		*cxl_func_sel_ksm = COMPARE;
 		kunmap_atomic(addr1);
 		kunmap_atomic(addr2);
 		// avoid precise usleep
@@ -341,11 +341,11 @@ static int cxl_memcmp_pages(struct page *page1, struct page *page2)
 	else{
 		void* virt_addr = ioremap(0x22feffa00000, 0x1000);
 		unsigned long long *ptr = (unsigned long long *) virt_addr;
-		cxl_func_sel = ptr;
-		cxl_page_addr_0 = cxl_func_sel + 1;
-		cxl_page_addr_1 = cxl_func_sel + 2;
-		cxl_cycle = cxl_func_sel + 3;
-		cxl_result = cxl_func_sel + 4;
+		cxl_func_sel_ksm = ptr;
+		cxl_page_addr_0 = cxl_func_sel_ksm + 1;
+		cxl_page_addr_1 = cxl_func_sel_ksm + 2;
+		cxl_cycle = cxl_func_sel_ksm + 3;
+		cxl_result = cxl_func_sel_ksm + 4;
 		ret = memcmp(addr1, addr2, PAGE_SIZE);
 		kunmap_atomic(addr1);
 		kunmap_atomic(addr2);
@@ -1151,7 +1151,7 @@ static u32 cxl_calc_checksum(struct page *page)
 
 	void *addr = kmap_atomic(page);
 	// ioremap failed, keeps the original checksum
-	if(cxl_func_sel == 0){
+	if(cxl_func_sel_ksm == 0){
 		checksum = xxhash(addr, PAGE_SIZE, 0);
 		kunmap_atomic(addr);
 		return checksum;
@@ -1159,7 +1159,7 @@ static u32 cxl_calc_checksum(struct page *page)
 	else{
 		prev_checksum = (u32)*cxl_result;
 		*cxl_page_addr_0 = virt_to_phys(addr);
-		*cxl_func_sel = CHECKSUM;
+		*cxl_func_sel_ksm = CHECKSUM;
 		kunmap_atomic(addr);
 
 		// udelay(40);
@@ -3559,11 +3559,11 @@ static int __init ksm_init(void)
 	}
 	unsigned long long *ptr = (unsigned long long *) virt_addr;
 
-	cxl_func_sel = ptr;
-	cxl_page_addr_0 = cxl_func_sel + 1;
-	cxl_page_addr_1 = cxl_func_sel + 2;
-	cxl_cycle = cxl_func_sel + 3;
-	cxl_result = cxl_func_sel + 4;
+	cxl_func_sel_ksm = ptr;
+	cxl_page_addr_0 = cxl_func_sel_ksm + 1;
+	cxl_page_addr_1 = cxl_func_sel_ksm + 2;
+	cxl_cycle = cxl_func_sel_ksm + 3;
+	cxl_result = cxl_func_sel_ksm + 4;
 
 	/* The correct value depends on page size and endianness */
 	zero_checksum = calc_checksum(ZERO_PAGE(0));

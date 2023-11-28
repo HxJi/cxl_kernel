@@ -28,6 +28,7 @@
 #include <linux/mempool.h>
 #include <linux/zpool.h>
 #include <crypto/acompress.h>
+#include <linux/delay.h>
 
 #include <linux/mm_types.h>
 #include <linux/page-flags.h>
@@ -1363,8 +1364,8 @@ skip_compression:
 	buf = zpool_map_handle(entry->pool->zpool, handle, ZPOOL_MM_WO);
 	if (zswap_cxl_zpool_enabled){
 		// copy page from host to zpool
-		cxl_src_page_addr = page_address(page);
-		cxl_dst_page_addr = buf;
+		cxl_src_page_addr = virt_to_phys(page_address(page));
+		cxl_dst_page_addr = virt_to_phys(buf);
 		cxl_page_movement_direction = HOST_TO_CXL;
 		usleep_range(50, 60);
 	}
@@ -1482,9 +1483,9 @@ static int zswap_frontswap_load(unsigned type, pgoff_t offset,
 	}
 
 	if(zswap_cxl_zpool_enabled){
-		// copy page from zpool to host
-		cxl_src_page_addr = src;
-		cxl_dst_page_addr = page_address(page);
+		// copy page from zpool to host, use phy addr
+		cxl_src_page_addr = virt_to_phys(src);
+		cxl_dst_page_addr = virt_to_phys(page_address(page));
 		cxl_page_movement_direction = CXL_TO_HOST;
 		usleep_range(50, 60);
 		ret = 0;
