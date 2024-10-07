@@ -306,11 +306,16 @@ static int cxl_memcmp_pages(struct page *page1, struct page *page2){
 		kunmap_atomic(addr1);
 		kunmap_atomic(addr2);
 		usleep_range(30, 30);
+		
+		// add a busy for loop 10us for DMA
+		// udelay calls ndelay which is based on busy polling
+		udelay(10);
+
 		ret = *cxl_result;
 	}
 
 	else{
-		void* virt_addr = ioremap(0x22feffa00000, 0x1000);
+		void* virt_addr = ioremap(0x20beffa00000, 0x1000);
 		unsigned long long *ptr = (unsigned long long *) virt_addr;
 		cxl_func_sel = ptr;
 		cxl_page_addr_0 = cxl_func_sel + 1;
@@ -1081,6 +1086,11 @@ static u32 cxl_calc_checksum(struct page *page){
 	kunmap_atomic(addr);
 
 	usleep_range(30, 30);
+
+	// add a busy for loop 10us for DMA
+	// udelay calls ndelay which is based on busy polling
+	udelay(10);
+
 	checksum = (u32)*cxl_result;
 	
 	return checksum;

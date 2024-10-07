@@ -1309,14 +1309,17 @@ static int zswap_frontswap_store(unsigned type, pgoff_t offset,
 		goto freepage;
 	}
 
+	
 	/* compress */
 	acomp_ctx = raw_cpu_ptr(entry->pool->acomp_ctx);
-
 	mutex_lock(acomp_ctx->mutex);
 
 	// CXL zpool skip compression, mutex_lock neccessay?
 	if (zswap_cxl_zpool_enabled){
 		dlen = PAGE_SIZE;
+		// compression time on ARM core/FPGA: 10us
+		// add additional latency = DMA - CXL: 2us
+		// udelay(8);
 		goto skip_compression;
 	}
 
@@ -1644,7 +1647,7 @@ static int zswap_setup(void)
 
 	// setup CXL offloading interface
 	if(zswap_cxl_zpool_enabled){
-		void *virt_addr = ioremap(0x22feffa00000, 0x1000);
+		void *virt_addr = ioremap(0x20beffa00000, 0x1000);
 		if(!virt_addr){
 			pr_err("ioremap failed\n");
 			zswap_cxl_zpool_enabled = 0;
