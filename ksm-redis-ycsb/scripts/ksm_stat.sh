@@ -1,0 +1,1 @@
+while true; do grep . /sys/kernel/mm/ksm/*; sleep 1; done > "${1}"
